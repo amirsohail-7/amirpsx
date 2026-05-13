@@ -1,0 +1,20 @@
+{
+  "name": "PSX Portfolio",
+  "short_name": "PSX",
+  "description": "Pakistan Stock Exchange Portfolio Tracker",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0a0f",
+  "theme_color": "#0a0a0f",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["finance"],
+  "lang": "en-PK"
+}
