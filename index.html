@@ -690,6 +690,30 @@ async function fetchPrice(ticker) {
         console.log("✅ Sarmaaya:", t, "=", price);
         return { price, changePct: chg, source: "sarmaaya", ts: Date.now() };
       }
+      console.warn("Sarmaaya price not found for:", t);
+    }
+  } catch(e) { console.warn("Sarmaaya ERR:", t, e.message); }
+
+  // METHOD 2 — dps.psx.com.pk
+  try {
+    var html2 = await fetchViaProxy("https://dps.psx.com.pk/company/" + t);
+    if (html2) {
+      var m2 = html2.match(/Rs\.\s*([\d,]+(?:\.\d+)?)/);
+      if (m2) {
+        var price2 = Number(m2[1].replace(/,/g, ""));
+        if (price2 > 0) {
+          var cm2 = html2.match(/([+-]\d+(?:\.\d+)?)\s*%/);
+          console.log("✅ DPS:", t, "=", price2);
+          return { price: price2, changePct: cm2 ? Number(cm2[1]) : 0, source: "dps", ts: Date.now() };
+        }
+      }
+    }
+  } catch(e) { console.warn("DPS ERR:", t, e.message); }
+
+  console.error("❌ All methods failed for:", t);
+  return null;
+}
+
 // ═══════════════════════════════════════════════
 // RENDER — DASHBOARD (Apple Stocks style)
 // ═══════════════════════════════════════════════
@@ -1012,30 +1036,6 @@ function renderDivs(){
   });
 }
 
-          <div class="tx-ticker">${ticker}</div>
-          <div class="tx-meta">${txs.length} trade${txs.length>1?"s":""} · ${fmtPKR(totInv)}</div>
-        </div>
-        <span class="tx-toggle" id="tg-${ticker}">▼</span>
-      </div>
-      <div class="tx-rows" id="txg-${ticker}">
-        ${txs.map(tx=>`
-          <div class="tx-row">
-            <span class="tx-badge tx-${tx.type.toLowerCase()}">${tx.type}</span>
-            <div class="tx-body">
-              <div class="tx-date">${tx.date}</div>
-              <div class="tx-detail">${fmtN(tx.qty)} shares @ Rs ${fmtNum(tx.price)}</div>
-              <div class="tx-total">${fmtPKR(tx.qty*tx.price+tx.commission)}</div>
-            </div>
-            <div class="tx-actions">
-              <button class="act-btn edit-btn" onclick="openEditTrade(${tx.id})" style="padding:6px 10px">✏️</button>
-              <button class="btn btn-danger btn-sm" onclick="confirmDelete('tx',${tx.id})" style="padding:6px 10px">🗑</button>
-            </div>
-          </div>`).join("")}
-      </div>`;
-    el.appendChild(grp);
-  });
-}
-
 function toggleTxGroup(ticker) {
   var rows = qs("#txg-"+ticker);
   var tog  = qs("#tg-"+ticker);
@@ -1182,7 +1182,7 @@ async function saveEditTrade(){
 // ═══════════════════════════════════════════════
 // CASH ACCOUNTS
 // ═══════════════════════════════════════════════
-function openSheet('cashSheet'){
+function openCashSheet(){
   renderCashList();
   qs("#cash-edit-id").value="";qs("#cash-label").value="";qs("#cash-amount").value="";qs("#cash-return").value="22";
   openSheet("cashSheet");
