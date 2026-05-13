@@ -717,6 +717,67 @@ async function fetchPrice(ticker) {
 // ═══════════════════════════════════════════════
 // RENDER — DASHBOARD (Apple Stocks style)
 // ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════
+// HOLDINGS CALCULATION (FIFO)
+// ═══════════════════════════════════════════════
+function calcHoldings() {
+  var map = {};
+  var sorted = [...S.transactions].sort((a,b) => new Date(a.date) - new Date(b.date));
+
+  sorted.forEach(tx => {
+    if (!map[tx.ticker]) map[tx.ticker] = { qty:0, cost:0, realized:0, lots:[] };
+    var h = map[tx.ticker];
+    if (tx.type === "BUY") {
+      h.qty  += tx.qty;
+      h.cost += (tx.qty * tx.price) + (tx.commission || 0);
+      h.lots.push({ qty: tx.qty, price: tx.price });
+    } else if (tx.type === "SELL") {
+      var sq = tx.qty, cs = 0;
+      for (var l of h.lots) {
+        if (!sq) break;
+        var take = Math.min(l.qty, sq);
+        cs += take * l.price; l.qty -= take; sq -= take;
+      }
+      h.realized += ((tx.qty * tx.price) - (tx.commission||0)) - cs;
+      h.qty -= tx.qty;
+      if (h.qty > 0) { var a = h.cost/(h.qty+tx.qty); h.cost -= a*tx.qty; } else h.cost=0;
+    }
+  });
+
+  var result = [];
+  Object.entries(map).forEach(([ticker, h]) => {
+    if (h.qty <= 0) return;
+    var pd = S.prices[ticker] || null;
+    var cp = pd ? pd.price : 0;
+    var avg = h.qty > 0 ? h.cost / h.qty : 0;
+    var mv = h.qty * cp;
+    result.push({
+      ticker, qty: h.qty, avgCost: avg, currPrice: cp,
+      mktValue: mv, unrealizedPnl: mv - (h.qty * avg),
+      pnlPct: avg > 0 ? (cp - avg) / avg : 0,
+      dayChangePct: pd ? pd.changePct : 0,
+      realizedPnl: h.realized,
+      priceSource: pd ? pd.source : null,
+      priceTs: pd ? pd.ts : null,
+      isCash: false
+    });
+  });
+
+  // Add cash from cash_accounts
+  var totalCash = S.cashAccounts.reduce((s,c) => s + (c.amount||0), 0);
+  if (totalCash > 0) {
+    result.push({
+      ticker:"CASH", qty:totalCash, avgCost:1, currPrice:1,
+      mktValue:totalCash, unrealizedPnl:0, pnlPct:0,
+      dayChangePct:0, realizedPnl:0, isCash:true,
+      priceSource:null, priceTs:null
+    });
+  }
+
+  S.holdings = result;
+  return result;
+}
+
 function renderDash() {
   calcHoldings();
   var h = S.holdings;
