@@ -634,19 +634,26 @@ var PUBLIC_PROXIES = [
 ];
 
 async function fetchViaProxy(targetUrl) {
-  // Try Cloudflare Worker first (fastest, most reliable)
-  if (CF_WORKER_URL) {
+  // Extract ticker from URL
+  var tickerMatch = targetUrl.match(/\/(?:stocks|company)\/([A-Z0-9]+)/i);
+  var ticker = tickerMatch ? tickerMatch[1].toUpperCase() : null;
+
+  // Use Cloudflare Worker with ?ticker= (returns clean JSON)
+  if (CF_WORKER_URL && ticker) {
     try {
-      var r0 = await fetch(CF_WORKER_URL + "?url=" + encodeURIComponent(targetUrl),
+      var r0 = await fetch(CF_WORKER_URL + "?ticker=" + ticker,
         { signal: AbortSignal.timeout(8000) });
       if (r0.ok) {
-        var t0 = await r0.text();
-        if (t0 && t0.length > 200) { console.log("CF Worker OK"); return t0; }
+        var data = await r0.json();
+        if (data.price && data.price > 0) {
+          console.log("CF Worker JSON OK:", ticker, "=", data.price);
+          return { __json: true, price: data.price, changePct: data.changePct||0, source: data.source };
+        }
       }
     } catch(e) { console.warn("CF Worker fail:", e.message); }
   }
 
-  // Try public proxies in order
+  // Fallback: public CORS proxies (return raw HTML)
   for (var i = 0; i < PUBLIC_PROXIES.length; i++) {
     try {
       var p = PUBLIC_PROXIES[i];
@@ -654,9 +661,7 @@ async function fetchViaProxy(targetUrl) {
       var r = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
       if (r.ok) {
         var text = await r.text();
-        // Make sure we got actual HTML, not an error page
         if (text && text.length > 200 && !text.includes('"error"')) {
-          console.log("Proxy", i, "OK for", targetUrl.substring(0,50));
           return text;
         }
       }
@@ -669,42 +674,41 @@ async function fetchPrice(ticker) {
   if (!isOnline) return null;
   var t = ticker.toUpperCase();
 
-  // METHOD 1 — Sarmaaya
-  // Title format: "UBL - Rs 407 | United Bank Limited"
-  // Meta: "The current share price is Rs 407"
+  // METHOD 1 — Sarmaaya via CF Worker (returns JSON) or proxy (returns HTML)
   try {
-    var html = await fetchViaProxy("https://sarmaaya.pk/stocks/" + t);
-    if (html) {
-      var price = null;
-      // Try title pattern first (most reliable)
-      var m = html.match(/[–\-|]\s*Rs\s+([\d,]+(?:\.\d+)?)/i);
-      if (!m) m = html.match(/share price is Rs\s+([\d,]+(?:\.\d+)?)/i);
-      if (!m) m = html.match(/current.*?Rs\s+([\d,]+(?:\.\d+)?)/i);
-      if (!m) m = html.match(/Rs\s+([\d,]+(?:\.\d{2}))/i);
-      if (m) price = Number(m[1].replace(/,/g, ""));
-
-      if (price && price > 0) {
-        var chg = 0;
-        var cm = html.match(/\(([-+]?[\d.]+)%\)/);
-        if (cm) chg = Number(cm[1]);
-        console.log("✅ Sarmaaya:", t, "=", price);
-        return { price, changePct: chg, source: "sarmaaya", ts: Date.now() };
+    var result = await fetchViaProxy("https://sarmaaya.pk/stocks/" + t);
+    if (result) {
+      // CF Worker returns JSON object directly
+      if (result.__json) {
+        console.log("✅ CF Worker:", t, "=", result.price);
+        return { price: result.price, changePct: result.changePct, source: result.source, ts: Date.now() };
       }
-      console.warn("Sarmaaya price not found for:", t);
+      // Public proxy returns raw HTML — parse it
+      var html = result;
+      var price = null;
+      var m = html.match(/[\u2013\-]\s*Rs\s+([\d,]+(?:\.\d+)?)/i)
+        || html.match(/Rs\s+([\d,]+(?:\.\d+)?)\s*\|/i)
+        || html.match(/share price is Rs\s+([\d,]+(?:\.\d+)?)/i)
+        || html.match(/current.*?Rs\s+([\d,]+(?:\.\d+)?)/i)
+        || html.match(/Rs\s+([\d,]+(?:\.\d{2}))/i);
+      if (m) price = Number(m[1].replace(/,/g, ""));
+      if (price && price > 0) {
+        var cm = html.match(/\(([-+]?[\d.]+)%\)/);
+        return { price, changePct: cm ? Number(cm[1]) : 0, source: "sarmaaya-proxy", ts: Date.now() };
+      }
     }
   } catch(e) { console.warn("Sarmaaya ERR:", t, e.message); }
 
-  // METHOD 2 — dps.psx.com.pk
+  // METHOD 2 — dps.psx.com.pk via proxy
   try {
-    var html2 = await fetchViaProxy("https://dps.psx.com.pk/company/" + t);
-    if (html2) {
-      var m2 = html2.match(/Rs\.\s*([\d,]+(?:\.\d+)?)/);
+    var result2 = await fetchViaProxy("https://dps.psx.com.pk/company/" + t);
+    if (result2 && !result2.__json) {
+      var m2 = result2.match(/Rs\.\s*([\d,]+(?:\.\d+)?)/);
       if (m2) {
         var price2 = Number(m2[1].replace(/,/g, ""));
         if (price2 > 0) {
-          var cm2 = html2.match(/([+-]\d+(?:\.\d+)?)\s*%/);
-          console.log("✅ DPS:", t, "=", price2);
-          return { price: price2, changePct: cm2 ? Number(cm2[1]) : 0, source: "dps", ts: Date.now() };
+          var cm2 = result2.match(/([+-]\d+(?:\.\d+)?)\s*%/);
+          return { price: price2, changePct: cm2 ? Number(cm2[1]) : 0, source: "dps-proxy", ts: Date.now() };
         }
       }
     }
